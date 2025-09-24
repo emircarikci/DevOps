@@ -1,0 +1,31 @@
+# env & secrets
+.env
+.env.*
+*.pem
+*.crt
+*.key
+
+# logs & data
+logs/
+**/logs/
+*.log
+opensearch-data/
+pgdata/
+penpot_pg/
+penpot_assets/
+jenkins_home/
+
+# build artifacts
+dist/
+node_modules/
+target/
+*.iml
+
+# OS/editor cruft
+.DS_Store
+**/.DS_Store
+.idea/
+.vscode/
+
+# docker
+**/.sincedb

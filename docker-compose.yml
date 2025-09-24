@@ -1,0 +1,393 @@
+version: '3.8'
+
+networks:
+  ${NETWORK_NAME}:
+    external: true
+
+volumes:
+  pgdata:
+  jenkins_home:
+  npm_data:
+  npm_letsencrypt:
+  penpot_pg:
+  penpot_assets:
+  opensearch-data:
+
+services:
+  # ---------- Reverse Proxy / SSL ----------
+  npm:
+    image: jc21/nginx-proxy-manager:2.11.2
+    container_name: npm
+    restart: unless-stopped
+    ports:
+      # - "80:80"
+      - "81:81"
+      - "443:443"
+    volumes:
+      - npm_data:/data
+      - npm_letsencrypt:/etc/letsencrypt
+    networks: [ ${NETWORK_NAME} ]
+
+  # ---------- Databases ----------
+  postgres:
+    image: postgres:15
+    container_name: postgres
+    restart: unless-stopped
+    ports:
+      - "5432:5432"
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    networks: [ ${NETWORK_NAME} ]
+
+  pgadmin:
+    image: dpage/pgadmin4
+    container_name: pgadmin
+    restart: unless-stopped
+    environment:
+      PGADMIN_DEFAULT_EMAIL: admin@local.com
+      PGADMIN_DEFAULT_PASSWORD: admin123
+    ports:
+      - "8082:80"
+    networks: [ ${NETWORK_NAME} ]
+
+  # ---------- SonarQube ----------
+  sonarqube:
+    image: sonarqube:latest
+    container_name: sonarqube
+    depends_on:
+      - postgres
+    environment:
+      SONAR_JDBC_URL: jdbc:postgresql://postgres:5432/${SONAR_DB}
+      SONAR_JDBC_USERNAME: ${SONAR_DB_USER}
+      SONAR_JDBC_PASSWORD: ${SONAR_DB_PASS}
+    ports:
+      - "9000:9000"
+    networks: [ ${NETWORK_NAME} ]
+    restart: unless-stopped
+
+  # ---------- Keycloak ----------
+  keycloak:
+    image: quay.io/keycloak/keycloak:latest
+    container_name: keycloak
+    command: 
+      - start
+      - --proxy=${KC_PROXY}
+      - --proxy-headers=${KC_PROXY_HEADERS}
+      - --hostname=${KC_HOSTNAME}
+    environment:
+      KEYCLOAK_ADMIN: ${KC_ADMIN}
+      KEYCLOAK_ADMIN_PASSWORD: ${KC_ADMIN_PASSWORD}
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/${KC_DB_NAME}
+      KC_DB_URL_DATABASE: ${KC_DB_NAME}
+      KC_DB_USERNAME: ${KC_DB_USER}
+      KC_DB_PASSWORD: ${KC_DB_PASS}
+      KC_HOSTNAME_STRICT: "false"
+      KC_HTTP_ENABLED: "true"
+    ports:
+      - "8080:8080"
+    volumes:
+      - ./themes:/opt/keycloak/providers
+    networks: [ ${NETWORK_NAME} ]
+    restart: unless-stopped
+
+  # ---------- Jenkins ----------
+  jenkins:
+    build:
+      context: ./jenkins
+      dockerfile: Dockerfile.jenkins
+    container_name: jenkins
+    user: root
+    ports:
+      - "${JENKINS_HTTP_PORT}:8080"
+      - "${JENKINS_AGENT_PORT}:50000"
+    environment:
+      - JENKINS_ADMIN_ID=${JENKINS_ADMIN_ID}
+      - JENKINS_ADMIN_PASSWORD=${JENKINS_ADMIN_PASSWORD}
+      - JENKINS_UC=https://updates.jenkins.io
+      - JENKINS_UC_EXPERIMENTAL=https://updates.jenkins.io/experimental
+      - JENKINS_UC_DOWNLOAD=https://updates.jenkins.io/download
+      - JENKINS_INCREMENTALS_REPO_MIRROR=https://repo.jenkins-ci.org/incrementals
+    volumes:
+      - /home/ubuntu/reserve-docker:/home/ubuntu/reserve-docker
+      - jenkins_home:/var/jenkins_home
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./jenkins/init.groovy.d:/var/jenkins_home/init.groovy.d
+    networks: [ ${NETWORK_NAME} ]
+    restart: unless-stopped
+
+  # ---------- Penpot Stack ----------
+  penpot-postgres:
+    image: postgres:15
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: penpot
+      POSTGRES_PASSWORD: ${PENPOT_DB_PASSWORD}
+      POSTGRES_DB: penpot
+    volumes:
+      - penpot_pg:/var/lib/postgresql/data
+    networks: [ ${NETWORK_NAME} ]
+
+  penpot-valkey:
+    image: valkey/valkey:8.1
+    restart: unless-stopped
+    command: ["valkey-server","--save","","--appendonly","no"]
+    networks: [ ${NETWORK_NAME} ]
+
+  penpot-backend:
+    image: penpotapp/backend:latest
+    restart: unless-stopped
+    environment:
+      PENPOT_FLAGS: enable-login-with-oidc enable-oidc-registration disable-email-verification
+      PENPOT_PUBLIC_URI: ${PENPOT_PUBLIC_URI}
+      PENPOT_AUTH_PROVIDERS: oidc
+      PENPOT_OIDC_DISCOVERY_URL: ${PENPOT_OIDC_DISCOVERY_URL}
+      PENPOT_OIDC_CLIENT_ID: ${PENPOT_OIDC_CLIENT_ID}
+      PENPOT_OIDC_BASE_URI: ${PENPOT_OIDC_BASE_URI}
+      PENPOT_OIDC_CLIENT_SECRET: ${PENPOT_OIDC_CLIENT_SECRET}
+      PENPOT_OIDC_SCOPES: ${PENPOT_OIDC_SCOPES}
+      PENPOT_DATABASE_URI: postgresql://penpot-postgres:5432/penpot
+      PENPOT_DATABASE_USERNAME: penpot
+      PENPOT_DATABASE_PASSWORD: ${PENPOT_DB_PASSWORD}
+      PENPOT_REDIS_URI: redis://penpot-valkey/0
+      PENPOT_ASSETS_STORAGE_BACKEND: assets-fs
+      PENPOT_SECRET_KEY: ${PENPOT_SECRET_KEY}
+      PENPOT_HTTP_TRUST_PROXY: "true"
+    volumes:
+      - penpot_assets:/opt/data/assets
+    networks: [ ${NETWORK_NAME} ]
+
+  penpot-frontend:
+    image: penpotapp/frontend:latest
+    restart: unless-stopped
+    environment:
+      PENPOT_FLAGS: enable-login-with-oidc enable-oidc-registration disable-email-verification
+      PENPOT_PUBLIC_URI: ${PENPOT_PUBLIC_URI}
+      PENPOT_BACKEND_URI: http://penpot-backend:6060
+      PENPOT_EXPORTER_URI: http://penpot-exporter:6061
+    depends_on: [ penpot-backend ]
+    ports:
+      - "9001:8080"
+    networks: [ ${NETWORK_NAME} ]
+
+  penpot-exporter:
+    image: penpotapp/exporter:latest
+    restart: unless-stopped
+    environment:
+      PENPOT_PUBLIC_URI: ${PENPOT_PUBLIC_URI}
+      PENPOT_REDIS_URI: redis://penpot-valkey/0
+    depends_on: [ penpot-backend, penpot-valkey ]
+    volumes:
+      - penpot_assets:/opt/data/assets
+    networks: [ ${NETWORK_NAME} ]
+
+  # ---------- OpenSearch + Dashboards + Logstash ----------
+  opensearch-node1:
+    container_name: opensearch-node1
+    image: opensearchproject/opensearch:2.11.1
+    environment:
+      - discovery.type=single-node
+      - plugins.security.disabled=true
+      - cluster.routing.allocation.disk.threshold_enabled=false
+      - OPENSEARCH_JAVA_OPTS=-Xms512m -Xmx512m
+      - bootstrap.memory_lock=true
+      - TZ=${TZ}
+    ulimits:
+      memlock:
+        soft: -1
+        hard: -1
+      nofile:
+        soft: 65536
+        hard: 65536
+    volumes:
+      - opensearch-data:/usr/share/opensearch/data
+    ports:
+      - "9200:9200"
+      - "9300:9300"
+    restart: unless-stopped
+    networks: [ ${NETWORK_NAME} ]
+
+  opensearch-dashboards:
+    container_name: opensearch-dashboards
+    image: opensearchproject/opensearch-dashboards:2.11.1
+    environment:
+      - OPENSEARCH_HOSTS=["http://opensearch-node1:9200"]
+      - DISABLE_SECURITY_DASHBOARDS_PLUGIN=true
+      - TZ=${TZ}
+    ports:
+      - "5601:5601"
+    depends_on: [ opensearch-node1 ]
+    restart: unless-stopped
+    networks: [ ${NETWORK_NAME} ]
+
+  logstash:
+    container_name: logstash
+    image: opensearchproject/logstash-oss-with-opensearch-output-plugin:latest
+    environment:
+      LS_JAVA_OPTS: "-Xms256m -Xmx256m"
+      TZ: ${TZ}
+    volumes:
+      - ./logstash/pipeline:/usr/share/logstash/pipeline
+      - ./logs:/logs
+    ports:
+      - "5044:5044"
+    depends_on: [ opensearch-node1 ]
+    restart: unless-stopped
+    networks: [ ${NETWORK_NAME} ]
+
+  # ---------- Harbor (requires prepared configs on host) ----------
+  harbor-redis:
+    image: goharbor/redis-photon:v2.10.0
+    container_name: harbor-redis
+    restart: unless-stopped
+    volumes:
+      - ${HARBOR_DATA_ROOT}/redis:/var/lib/redis
+    networks: [ ${NETWORK_NAME} ]
+
+  harbor-db:
+    image: goharbor/harbor-db:v2.10.0
+    container_name: harbor-db
+    restart: unless-stopped
+    depends_on: [ harbor-log ]
+    env_file:
+      - ${HARBOR_CFG_ROOT}/db/env
+    volumes:
+      - ${HARBOR_DATA_ROOT}/database:/var/lib/postgresql/data
+    networks: [ ${NETWORK_NAME} ]
+
+  harbor-registry:
+    image: goharbor/registry-photon:v2.10.0
+    container_name: harbor-registry
+    restart: unless-stopped
+    volumes:
+      - ${HARBOR_DATA_ROOT}/registry:/var/lib/registry
+      - ${HARBOR_CFG_ROOT}/registry:/etc/registry:z
+      - ${HARBOR_CFG_ROOT}/shared/trust-certificates:/etc/harbor/ssl
+    networks: [ ${NETWORK_NAME} ]
+
+  harbor-registryctl:
+    image: goharbor/harbor-registryctl:v2.10.0
+    container_name: harbor-registryctl
+    restart: unless-stopped
+    depends_on: [ harbor-registry ]
+    env_file:
+      - ${HARBOR_CFG_ROOT}/registryctl/env
+    volumes:
+      - ${HARBOR_DATA_ROOT}/registry:/var/lib/registry
+      - ${HARBOR_CFG_ROOT}/registry:/etc/registry:z
+    networks: [ ${NETWORK_NAME} ]
+
+  harbor-core:
+    image: goharbor/harbor-core:v2.10.0
+    container_name: harbor-core
+    restart: unless-stopped
+    depends_on:
+      - harbor-db
+      - harbor-redis
+      - harbor-registry
+      - harbor-registryctl
+      - harbor-log
+    env_file:
+      - ${HARBOR_CFG_ROOT}/core/env
+    volumes:
+      - ${HARBOR_DATA_ROOT}/secret:/etc/core/secret
+      - ${HARBOR_CFG_ROOT}/core/app.conf:/etc/core/app.conf:ro
+      - ${HARBOR_CFG_ROOT}/registry:/etc/registry:ro
+    networks: [ ${NETWORK_NAME} ]
+
+  harbor-portal:
+    image: goharbor/harbor-portal:v2.10.0
+    container_name: harbor-portal
+    restart: unless-stopped
+    depends_on: [ harbor-core ]
+    volumes:
+      - ${HARBOR_CFG_ROOT}/portal/nginx.conf:/etc/nginx/nginx.conf:ro
+    networks: [ ${NETWORK_NAME} ]
+
+  harbor-jobservice:
+    image: goharbor/harbor-jobservice:v2.10.0
+    container_name: harbor-jobservice
+    restart: unless-stopped
+    depends_on: [ harbor-core ]
+    env_file:
+      - ${HARBOR_CFG_ROOT}/jobservice/env
+    volumes:
+      - ${HARBOR_LOG_ROOT}:/var/log/jobs
+      - ${HARBOR_CFG_ROOT}/jobservice/config.yml:/etc/jobservice/config.yml:ro
+    networks: [ ${NETWORK_NAME} ]
+
+  harbor-trivy:
+    image: goharbor/trivy-adapter-photon:v2.10.0
+    container_name: harbor-trivy
+    restart: unless-stopped
+    volumes:
+      - ${HARBOR_DATA_ROOT}/trivy:/home/scanner/.cache/trivy
+    depends_on: [ harbor-core ]
+    networks: [ ${NETWORK_NAME} ]
+
+  harbor-nginx:
+    image: goharbor/nginx-photon:v2.10.0
+    container_name: harbor-nginx
+    restart: unless-stopped
+    ports:
+      - "8083:8080"
+    volumes:
+      - ${HARBOR_CFG_ROOT}/nginx:/etc/nginx:ro
+      - ${HARBOR_DATA_ROOT}/secret/keys:/etc/harbor/ssl
+      - ${HARBOR_LOG_ROOT}:/var/log/nginx
+    depends_on:
+      - harbor-core
+      - harbor-portal
+      - harbor-registry
+      - harbor-registryctl
+      - harbor-log
+    networks: [ ${NETWORK_NAME} ]
+
+  harbor-log:
+    image: goharbor/harbor-log:v2.10.0
+    container_name: harbor-log
+    restart: unless-stopped
+    volumes:
+      - ${HARBOR_LOG_ROOT}/:/var/log/docker/:z
+    networks: [ ${NETWORK_NAME} ]
+
+  # ---------- App Services (compose.app.yml içeriği entegre) ----------
+  reserve-backend:
+    image: "${BACKEND_IMAGE}"
+    container_name: reserve-backend
+    restart: unless-stopped
+    expose: [ "8080" ]
+    environment:
+      SPRING_PROFILES_ACTIVE: prod
+      SPRING_DATASOURCE_URL: jdbc:postgresql://postgres:5432/${POSTGRES_DB}
+      SPRING_DATASOURCE_USERNAME: ${POSTGRES_USER}
+      SPRING_DATASOURCE_PASSWORD: ${POSTGRES_PASSWORD}
+      KEYCLOAK_AUTH_SERVER_URL: http://keycloak:8080
+      KEYCLOAK_REALM: reserve
+      KEYCLOAK_RESOURCE: reserve-backend
+      ALLOWED_ORIGINS: "${ALLOWED_ORIGINS}"
+    healthcheck:
+      test: >
+        sh -c '(curl -fsS http://localhost:8080/actuator/health | grep -q ""status":"UP"") ||
+               (echo "tcp check"; nc -z localhost 8080)'
+      interval: 30s
+      timeout: 5s
+      retries: 10
+    networks: [ ${NETWORK_NAME} ]
+
+  reserve-frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    image: ${FRONTEND_IMAGE}
+    container_name: reserve-frontend
+    restart: unless-stopped
+    expose: [ "80" ]
+    environment:
+      VITE_API_BASE_URL: "${VITE_API_BASE_URL}"
+      VITE_KEYCLOAK_URL: "${VITE_KEYCLOAK_URL}"
+    networks: [ ${NETWORK_NAME} ]
