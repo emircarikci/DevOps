@@ -44,3 +44,7 @@ Buradaki örnek Tübitak'ta yapılan rezervasyon uygulaması için bir örnektir
 
 
 PİPELİNE EKRAN GÖRÜNTÜSÜ:![Pipeline-Jenkins](https://github.com/user-attachments/assets/36976972-c380-499e-b995-fc0aded57f41)
+
+HARBOR EKRAN GÖRÜNTÜSÜ:<img width="2048" height="1055" alt="Harbor" src="https://github.com/user-attachments/assets/581ad7df-acf7-47e0-89b2-2ed3df02cb74" />
+
+NGİNX PROXY MANAGER EKRAN GÖRÜNTÜSÜ (CUSTOM SSL): <img width="984" height="865" alt="Nginx Proxy Manager" src="https://github.com/user-attachments/assets/4bbf57d1-e86a-4c40-a328-587d781278d9" />
