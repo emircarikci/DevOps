@@ -11,6 +11,18 @@ docker network create dev-network || true
 docker compose --env-file .env up -d
 ```
 
+## Servisler (Özet)
+- **Nginx Proxy Manager**: Reverse proxy & SSL (81, 443)
+- **Postgres / PGAdmin**: Uygulama DB’si ve yönetimi
+- **SonarQube**: Kod kalite analizi (9000)
+- **Keycloak**: SSO OIDC kimlik sağlayıcı (8080)
+- **Jenkins**: CI/CD (9080, 50000)
+- **OpenSearch + Dashboards + Logstash**: Log merkezi (9200, 5601)
+- **Harbor**: Private registry (8083) — *Harbor configleri host dizinlerinde beklenir*
+- **Penpot**: Tasarım aracı (frontend/backend/exporter)
+- **reserve-backend**: `image: ${BACKEND_IMAGE}` ile override edilir
+- **reserve-frontend**: `image: ${FRONTEND_IMAGE}`
+
 > **Gizlilik:** Tüm şifre/token gibi bilgileri `.env` içine koyulmalı. 
 
 ## Jenkins Deploy
