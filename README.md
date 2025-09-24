@@ -41,3 +41,6 @@ docker compose --env-file .env up -d
 
 ## Örnek amacı
 Buradaki örnek Tübitak'ta yapılan rezervasyon uygulaması için bir örnektir.
+
+
+PİPELİNE EKRAN GÖRÜNTÜSÜ:![Pipeline-Jenkins](https://github.com/user-attachments/assets/36976972-c380-499e-b995-fc0aded57f41)
